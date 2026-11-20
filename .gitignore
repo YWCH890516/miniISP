@@ -1,0 +1,32 @@
+.DS_Store
+build*/
+
+# Locally built executables
+/main
+/miniISP
+
+# Large/local image assets and generated outputs
+/Image/*
+!/Image/README.md
+
+# Local resumes, interview decks, and their generated assets
+/docs/career/
+/demosaic_report.pdf
+
+# Local credentials and tool state
+.env
+.env.*
+!.env.example
+.aws/
+.codex/
+.agents/
+
+# Compiler and Python cache files
+*.dSYM/
+__pycache__/
+*.pyc
+
+# Editor files
+.vscode/
+.idea/
+*.swp

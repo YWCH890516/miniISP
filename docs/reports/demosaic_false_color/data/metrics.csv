@@ -1,0 +1,9 @@
+pattern,method,rgb_rmse_linear,chroma_error_linear,green_mae_linear,out_of_range_channel_pct
+flat,bilinear,0,0,0,0
+flat,median,0,0,0,0
+edge,bilinear,0.04063800642,0.006030971367,0.003436251128,0
+edge,median,0.03180165277,0.0006925011079,0.003436251128,0
+grating,bilinear,0.2123102379,0.1706456199,0.1048933668,0
+grating,median,0.1759565506,0.04484763422,0.1048933668,0
+color_detail,bilinear,0.090941557,0.06367798155,0.01076754965,0
+color_detail,median,0.1024076578,0.07109150299,0.01076754965,0

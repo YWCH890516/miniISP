@@ -1,0 +1,18 @@
+{
+  "date": "2026-11-15",
+  "sha256": {
+    "Image/ReportImage/CatYesBLCYesAWBYessRGB.ppm": "461734decd3b5bb3bd710fe98a980c78407da1044ff67582c9bf2a1193b1a470",
+    "src/Demosaic.cpp": "11f3c19aa443f190b3844e44564fc31b52d86feaf3d456c8de6c997832dbefea",
+    "src/BayerUtils.cpp": "678f7c7cd0a1e3a62a761270126904d3792c498a46657793b8c3ce560d2a4705",
+    "src/ImageMath.cpp": "041c2e4d2597508443a6dbb28cbe77d00b670c4a27e0cb61b783b5cf8445a6ae",
+    "main.cpp": "1fb887dd9906b3a32a9c3f86d9c5190bb09eed723873ac22e48c42f492b87a05",
+    "include/miniISP/Demosaic.h": "fdcd1989087a0777062a008dc1206ae132def2462883536e4b63ff77cf1367bf",
+    "include/miniISP/BayerUtils.h": "098c3ab199c803b2e7a0b4dc26b357c79bd5e350b637a1eef1e93c70ca8e8d32",
+    "include/miniISP/InputData.h": "d689d2465c559afac8822046548bfc5e6b6da4fb7bb1f76d574814cc0b04d205",
+    "docs/career/comparisons/data/metrics.csv": "69cf3cc65ae08b47c8d47a489cd769d65700a1b4511460100daf9f9bd98b9a98",
+    "docs/reports/demosaic_false_color/experiment.cpp": "69b686d76211667748866e1794828cb3eaef21b08028cfbe8044c257dfad69be",
+    "docs/reports/demosaic_false_color/build_report.py": "b759a739f52c9acad8744baecedd80d61b54b103edea280d9ff917589cf548f9",
+    "docs/reports/demosaic_false_color/render_report.swift": "e532374825507c3f8746c9657475ebf197381e62763adaf998cd9328e35ba87d",
+    "docs/reports/demosaic_false_color/data/metrics.csv": "61d7b4b2d078d22651f2866258fe7f590a31dedd9ef728c46fde29348f3e5cf8"
+  }
+}

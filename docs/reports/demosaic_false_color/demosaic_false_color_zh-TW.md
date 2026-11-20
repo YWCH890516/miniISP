@@ -1,0 +1,236 @@
+# Demosaic 偽色抑制技術報告
+2026-11-15｜miniISP 技術與驗證筆記
+
+## Demosaic 如何抑制偽色
+miniISP 技術報告｜原理、常見方法、實驗與實作路線｜2026-11-15
+
+> 核心觀點：降低跨邊緣插值誤差、利用 RGB 通道的結構關聯，再對低可信度的色度作適量抑制。目標同時包含：少偽色、保留亮度細節、保留真實彩色紋理。
+
+CFA / 前處理 → 重建 RGB → 適量色度修整 → 色彩與顯示
+
+### 四種常見思路
+
+| 思路 | 解決什麼問題 | 必須付出的代價 |
+| --- | --- | --- |
+| 方向感知 | 沿變化較小的方向取樣，減少跨越邊緣。 | 雜訊、斜線與交叉紋理可能讓方向判斷失準。 |
+| 通道關聯 | 插值 R−G / B−G 或更平滑的殘差，維持共同邊緣。 | 色差不一定處處平滑；真實彩色細節需保護。 |
+| 色度後處理 | 在可疑位置減少彩斑、彩邊與部分色彩振盪。 | 過強會掉色；不保證恢復已混疊的亮度紋理。 |
+| 取樣前的控制 | 光學低通、拍攝尺度等可減少進入 CFA 的過高頻率。 | 會影響解析度；既有 DNG 無法事後重做光學取樣。 |
+
+公開方法提供不同取捨，沒有一個演算法能對所有場景同時保證零偽色、最高銳利度與最低運算量。本文介紹公開文獻，不推定特定手機或 ISP 廠商採用哪一套。 [來源 1](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/Demosaicing_ICASSP04.pdf) [來源 6](https://www.ipol.im/pub/art/2021/358/)
+
+### 本報告的證據範圍
+
+方法綜述依據原始論文、專利及 IPOL 可重現說明；專案現況依本地程式碼核對。新增實驗只呼叫現有 DemosaicBilinear16，另以獨立測試程式示範一次色差中值濾波；沒有修改 main.cpp 或核心演算法。
+
+閱讀順序：第 2 頁理解成因；第 3–5 頁比較重建與抑制方法；第 6 頁看實驗代價；第 7–8 頁對照 miniISP 與驗證規劃；第 9 頁提供來源。
+
+
+## 01｜偽色從哪裡產生？
+先區分取樣造成的資訊不足，與後續插值造成的估計誤差。
+
+Bayer 每個位置只量到一個通道。R、G、B 在不同位置取樣，當細線或紋理的亮度變化接近取樣尺度，各通道可能看到不同的明暗相位。獨立補值後，原本的亮度變化便可能表現為通道比例變化。 [來源 1](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/Demosaicing_ICASSP04.pdf) [來源 2](https://www.ipol.im/pub/art/2011/g_mhcd/)
+
+示意：中性明暗紋理 → 不同位置的 RGGB 取樣 → 通道間插值誤差 → 局部彩色假訊號。
+
+> 已經混疊的訊號，不一定能靠單張 RAW 唯一還原。把彩紋濾掉，也不代表找回原本紋理。
+
+| 現象 | 觀察特徵 | 優先檢查 |
+| --- | --- | --- |
+| False color | 中性邊緣或紋理出現不存在的局部顏色。 | CFA 相位、demosaic、色度處理。 |
+| Color moiré | 細密規律紋理出現較大尺度的彩色波紋。 | 頻率、方向、取樣相位與拍攝尺度。 |
+| Zipper | 邊緣交替明暗或交替顏色，像拉鍊。 | 各位置插值規則的一致性。 |
+| 整體偏綠／偏黃 | 大量中性色共同偏向某個色調。 | BLC、WB、色彩轉換；不宜直接當偽色。 |
+
+彩色雜訊、鏡頭色差與錯誤 CFA 排列，也會產生彩色瑕疵。先用已知中性的低雜訊圖樣、正確 Bayer 相位和固定顯示設定排除這些因素，才容易把問題定位到 demosaic。
+
+縮圖、失焦或低反差會讓偽色比較不顯眼；16-bit 增加的是數值精度，不會補回缺少的空間取樣。
+
+
+## 02｜方向感知與色差插值
+先把 G 的結構估穩，再讓 R、B 的邊緣跟上。
+
+### 方向感知：減少跨越明暗邊界
+
+在 R 或 B 位置估 G 時，同時計算水平與垂直候選值，用附近的變化程度評估方向。Hamilton–Adams 類方法還利用同色樣本的二階差分修正候選值。以下以 R 位置為教學示意；完整版本需參照原文的判斷與邊界規則。 [來源 3](https://patents.google.com/patent/US5629734A/en) [來源 6](https://www.ipol.im/pub/art/2021/358/)
+
+```text
+GH = (GL + GR) / 2 + (2*R0 - RLL - RRR) / 4
+GV = (GU + GD) / 2 + (2*R0 - RUU - RDD) / 4
+DH = abs(GL - GR) + abs(2*R0 - RLL - RRR)
+DV = abs(GU - GD) + abs(2*R0 - RUU - RDD)
+```
+
+L/R/U/D 是相鄰一格，LL/RR/UU/DD 是兩格。較小分數通常表示該方向較平滑；接近時可平均或依可信度混合。低梯度不保證判斷正確，週期紋理與雜訊仍可能造成誤判。
+
+### 色差插值：不要讓三個通道各自找邊緣
+
+```text
+DR = R - G       DB = B - G
+R_hat = G_hat + interpolate(DR)
+B_hat = G_hat + interpolate(DB)
+```
+
+先取得完整 G，在原本量到 R 或 B 的位置計算色差，再插值色差並加回 G。對許多區域，共同的亮度變化會在相減時部分抵消，因此色差可能比原始通道平滑。此假設在色彩邊界與細彩線會失效。 [來源 6](https://www.ipol.im/pub/art/2021/358/) [來源 7](https://www.ipol.im/pub/art/2011/bcms-ssdd/srcdoc/libdemosaicking_8h.html)
+
+> 對 miniISP 的意義：目前 V2 已改善 G 的方向判斷，但 R／B 仍主要直接插值原通道。接著建立完整 G 與 signed 色差平面，是比單純再增加方向閾值更清楚的實驗方向。
+
+實作時用 float 或足夠寬的 signed 型別保存負色差；分階段讀取不可變的來源 buffer，避免逐像素覆寫使結果依掃描順序改變。
+
+
+## 03｜常見重建演算法怎麼選？
+以下是方法特性與相對實作負擔，並非在你的硬體上量到的效能排名。
+
+| 方法 | 核心機制 | 優點與限制 |
+| --- | --- | --- |
+| Bilinear<br>基線 | 各通道獨立使用附近同色樣本平均。 | 容易理解、計算少；邊緣與高頻紋理較易出現偽色或模糊。[1] |
+| Hamilton–Adams<br>方向＋色差 | 方向評估、同色二階修正，再利用通道差異補值。 | 結構清楚、適合延伸現有 edge-aware；方向誤判仍會留下瑕疵。[3][6] |
+| MHC<br>固定 5×5 | Bilinear 加上跨通道 Laplacian 修正，可化成固定濾波器。 | 成本可預測，適合做較強基線；沒有逐像素方向選擇，仍可能有振鈴與高頻偽色。[1][2] |
+| AHD<br>多候選選擇 | 產生不同方向候選，再依局部亮度／色度的同質性選擇。 | 比較重建後的局部一致性；需要候選影像和額外判斷，仍有失效場景。[4] |
+| RI / ARI<br>殘差插值 | 先預估通道，插值量測值與預估值之間的殘差，再合成結果。 | 利用較平滑的殘差減少重建誤差；模型、方向或迭代選擇更複雜。[5][6] |
+
+### MHC 的一個例子：用 R 的結構幫助估 G
+
+```text
+G_hat = G_bilinear + 0.5 * DeltaR
+DeltaR = R0 - (RLL + RRR + RUU + RDD) / 4
+```
+
+以上只展示 R 位置估 G 的一個分支；其他 CFA 位置有不同係數。MHC 是跨通道的固定線性濾波，不應把它描述成會選方向的 edge-aware 方法。 [來源 1](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/Demosaicing_ICASSP04.pdf) [來源 2](https://www.ipol.im/pub/art/2011/g_mhcd/)
+
+RI 中的 residual 是觀測值減去暫時預估值，不一定等於 R−G。ARI 會進一步調整殘差插值策略；不能只加一次 median 就稱為 RI 或 AHD。 [來源 5](https://doi.org/10.1109/TIP.2016.2518082) [來源 6](https://www.ipol.im/pub/art/2021/358/)
+
+> 建議比較順序：保留 bilinear → 加一個可重現的 MHC 基線，或延伸現有方向＋色差版本 → 有失效案例後，再評估 AHD／RI 的額外成本。
+
+
+## 04｜重建後，怎麼抑制殘餘偽色？
+優先處理色度異常，並明確保護真實彩色細節。
+
+### 容易理解的原型：色差中值濾波
+
+對重建後的 signed R−G、B−G 做小視窗 median，再加回 G。IPOL 的實作也提供 chromatic median 與保留原 CFA 值的選項；以下是本報告自寫的簡化原型，不是該程式的完整重現。 [來源 7](https://www.ipol.im/pub/art/2011/bcms-ssdd/srcdoc/libdemosaicking_8h.html)
+
+```text
+DR = R - G;                 DB = B - G;
+DRm = median3x3(DR);         DBm = median3x3(DB);
+DRout = (1-q)*DR + q*DRm;    DBout = (1-q)*DB + q*DBm;
+Rout = G + DRout;            Bout = G + DBout;
+Gout = G;                   // 0 <= q <= 1
+```
+
+q 表示抑制強度；下一頁實驗固定 q=1、僅執行一次。它保留 G，並不保證真正的亮度完全不變；也可能修改原本量到的 R／B。是否保留 CFA 量測值，必須明確定義。
+
+### 讓 q 有依據，而不是所有地方一樣強
+
+| 可以參考的訊號 | 判斷上的限制 |
+| --- | --- |
+| 色差局部振盪、離群程度 | 細彩線也可能快速變色，不能只因色差大就抑制。 |
+| 多方向候選是否互相矛盾 | 低可信度表示重建困難，並不等於一定是假色。 |
+| 亮度結構、原始 CFA 一致性 | 需聯合判斷；真實色彩邊界可能沒有強亮度邊界。 |
+| 雜訊、飽和與訊號強度 | 暗部彩噪和高光截斷需另有策略；不能全部交給 median。 |
+
+另一條路是先轉成明確定義的亮度／色度表示，用亮度引導色度的 edge-aware 濾波。仍要注意等亮度的彩色邊緣；不能只保留亮度邊緣就假設顏色不會流失。此段為工程設計建議。
+
+> 本報告以 demosaic 後、CCM 前的線性資料示範。實務放置位置與閾值需配合 WB gain、噪聲模型和色彩空間重調。CCM／gamma 不能替代偽色抑制；它們可能改變已有誤差的可見程度。
+
+
+## 05｜實測：去掉假色，也可能傷到真色
+四張自製圖樣｜現有 DemosaicBilinear16｜一次 3×3 色差中值濾波
+
+128×96、RGGB、white level=65535、black=0；沒有 AWB、CCM、噪聲或光學模糊。中性圖樣三通道相同；彩色細線作為反例。預覽統一使用 sRGB 曲線；量測使用編碼前的線性資料。
+
+![已知中性參考](assets/grating_reference.png)
+![Bilinear](assets/grating_bilinear.png)
+![Bilinear＋色差 median](assets/grating_median.png)
+斜向正弦紋理：0.31 cycles/pixel（x）、0.17（y）。超過 R／B 子格某些方向的可分辨頻率；用來刻意暴露混疊。
+
+![真實彩色細線](assets/color_detail_reference.png)
+![Bilinear](assets/color_detail_bilinear.png)
+![Bilinear＋色差 median](assets/color_detail_median.png)
+第二列的紅／藍細線是真實顏色，不應以變灰作為成功標準。所有圖樣皆為理想化取樣測試，不代表實際 sensor 的光譜響應。
+
+| 圖樣 | RGB RMSE：前 → 後 | 色差誤差：前 → 後 |
+| --- | --- | --- |
+| 均勻中性 | 0.00000 → 0.00000 | 0.00000 → 0.00000 |
+| 黑白斜邊 | 0.04064 → 0.03180 | 0.00603 → 0.00069 |
+| 中性高頻紋理 | 0.21231 → 0.17596 | 0.17065 → 0.04485 |
+| 真實彩色細線 | 0.09094 → 0.10241 | 0.06368 → 0.07109 |
+
+定義：RGB RMSE = sqrt(mean((output−reference)²))，平均涵蓋所有 RGB 樣本。色差誤差 = mean((|Δ(R−G)|+|Δ(B−G)|)/2)，Δ 表示與參考之差。排除四周各 3 pixels；使用未截斷的浮點輸出，不是 ΔE。
+
+> 黑白斜邊的偽色下降；真實彩色細線的 RGB 與色差誤差卻都上升。G 完全未被修改，高頻紋理的 G-MAE 仍為 0.10489：彩紋減少並沒有還原亮度細節。
+
+
+## 06｜對照你目前的 miniISP
+程式碼與既有輸出核對｜沒有把文獻方法誤寫成已完成的功能。
+
+| 目前項目 | 核對結果 | 接下來可驗證什麼 |
+| --- | --- | --- |
+| 16-bit / Cat | DemosaicBilinear16；支援 pattern，平均補值，沒有方向或色差後處理。 | 作為固定基線；用相同輸入與顯示流程比較改版。 |
+| 8-bit EdgeAwareV2 | RGGB 假設；5×5 多點方向評分估 G，R／B 使用鄰點或對角補值。 | 增加通道關聯；不要只把 uint8 改成 uint16 就沿用固定閾值。 |
+| 數值與邊界 | 已有取樣邊界 helper、32-bit 加總。V2 的 10／3 閾值屬 8-bit 尺度。 | 色差與負係數要 signed／float；擴邊需維持 CFA 相位。 |
+
+![Cat：百葉窗局部](assets/cat_blinds.png)
+![Cat：門框／細線局部](assets/cat_edge.png)
+來源：Image/ReportImage/CatYesBLCYesAWBYessRGB.ppm；RAW 方向下的 (700,150)、(1150,1700)，各 512×384，零起算。PDF 內為縮放顯示；精查應開原圖 100%。
+
+這兩塊未見強烈的大尺度彩紋，不能證明整張沒有偽色。輸出含 BLC、AWB、bilinear 與 sRGB 曲線預覽，尚無 CCM；畫面較柔和或縮小顯示，均可能掩蓋細小彩邊。
+
+### 既有 Tree 合成 Bayer 測試：只能作補充證據
+
+先前記錄為 bilinear 32.61 dB、edge-aware V2 33.15 dB。來源是 8-bit 編碼 RGB 的 Tree.ppm → RGGB → RGB，排除 2-pixel 邊界，peak=255。這個 PSNR 進步不等於實際 DNG 的偽色已解決；也不能與本報告的 16-bit 線性合成數值直接相比。
+
+既有數據：docs/career/comparisons/data/metrics.csv；本報告記錄輸入與程式 SHA-256，以區分這次檢查和之後的修改。
+
+
+## 07｜怎麼驗證，才不會只得到更模糊的圖？
+同一輸入、同一顯示曲線、同一 ROI；一起量測假色與真實細節。
+
+| 測試類型 | 內容 | 主要觀察 |
+| --- | --- | --- |
+| 基本正確性 | 均勻中性／純色、四種 Bayer、奇偶尺寸、裁切與邊界。 | CFA 相位、常量保持、越界與假色。 |
+| 可重現混疊 | 黑白斜邊、細字、棋盤、不同頻率／角度／相位的正弦圖。 | 偽色、zipper、摩爾紋；不可只測一張。 |
+| 真色保護 | 等亮度彩邊、細彩線、布料、印刷色卡紋理。 | 是否掉色、色度跨邊、細節消失。 |
+| 真實 RAW | Cat、色卡、布料，多種曝光／gain；中性 ROI 避開過曝。 | 固定 WB／CCM 與曝光縮放，比較 100% crop。 |
+
+### 指標需要成對閱讀
+
+有 ground truth：全圖與 ROI 的 RGB RMSE／PSNR、色差誤差、邊緣輪廓與高頻對比。中性圖可額外量 mean(|R−G|+|B−G|)/2。彩色圖必須與參考色差比較，不能把低色度直接當作好成績。
+
+真實 RAW 沒有同場景完整 RGB 真值：可比固定 ROI、邊緣輪廓與中性色度，但不要宣稱得到精確重建誤差。色卡 ΔE 是色彩校正指標，需正確色彩空間、白點及可靠參考，不能單獨代表 demosaic 品質。
+
+### 建議的 miniISP 下一版
+
+鎖定 16-bit 基線 → 方向＋色差 / MHC → 選擇性色度抑制 → 失效案例＋成本
+
+先建立 float 的中間平面，讓負色差與濾波超調保留到明確的輸出範圍處理階段。黑位準先處理；飽和與雜訊條件另列測項。加入抑制時，同時比較關閉、弱、強三種設定，且固定其他 ISP 步驟。
+
+效能量測記錄解析度、硬體、編譯選項、執行緒、暖機與多次耗時；報告 ms/frame、峰值記憶體。固定 5×5 串流可估所需 line buffers，但不能把離線 C++ 測速直接當成 ISP 晶片 throughput。
+
+> 面試可以這樣說：我先建立 bilinear 基線，用中性高頻圖暴露偽色，再以真實彩色細線確認抑制沒有過度掉色。方向與跨通道資訊改善重建；後處理只處理殘餘誤差，並保留失效案例。
+
+
+## 08｜來源與重現方式
+內文來源按編號對照；數據與圖樣均可在本地重現。
+
+[1] Malvar, He & Cutler (2004). [High-Quality Linear Interpolation for Demosaicing of Bayer-Patterned Color Images](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/Demosaicing_ICASSP04.pdf).
+
+[2] Getreuer (2011), IPOL. [Malvar-He-Cutler Linear Image Demosaicking](https://www.ipol.im/pub/art/2011/g_mhcd/).
+
+[3] Hamilton & Adams (1997), US5629734A. [Adaptive color plan interpolation in single sensor color electronic camera](https://patents.google.com/patent/US5629734A/en).
+
+[4] Hirakawa & Parks (2005), IEEE TIP. [Adaptive Homogeneity-Directed Demosaicing Algorithm](https://doi.org/10.1109/TIP.2004.838691).
+
+[5] Kiku, Monno, Tanaka & Okutomi (2016), IEEE TIP. [Beyond Color Difference: Residual Interpolation for Color Image Demosaicking](https://doi.org/10.1109/TIP.2016.2518082).
+
+[6] Jin, Guo, Morel & Facciolo (2021), IPOL. [A Mathematical Analysis and Implementation of Residual Interpolation Demosaicking Algorithms](https://www.ipol.im/pub/art/2021/358/).
+
+[7] Buades et al., IPOL implementation documentation. [Self similarity driven demosaicking — chromatic_median](https://www.ipol.im/pub/art/2011/bcms-ssdd/srcdoc/libdemosaicking_8h.html).
+
+### 本地檔案
+
+experiment.cpp：呼叫現有 demosaic 的獨立測試；data/metrics.csv：量測結果；assets/：原尺寸圖樣與 Cat 裁切；manifest.json：輸入與程式雜湊；report_content.json／.md：可編輯報告內容。
+
+README.md 提供編譯、重跑測試及 PDF 產生指令。合成圖為自製；Cat 圖取自你的專案。本報告沒有拷貝論文圖表或第三方原始碼，也沒有執行 MHC／AHD／RI 的效能比較。
+
+> 可合理主張：已釐清常見抑制機制，並用既有 16-bit demosaic 重現「減少偽色／損傷真色」的取捨。尚不能主張：所有場景無偽色、真實相機最佳化完成，或已實作表列的全部方法。
