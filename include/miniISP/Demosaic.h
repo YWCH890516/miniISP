@@ -15,5 +15,7 @@ namespace mini_isp{
 
     // 16bit function 
     void DemosaicBilinear16(const std::vector<uint16_t>& bayerRaw, std::vector<RGBFormat16>& pixels, int width, int height, BayerPattern pattern, uint16_t whiteLevel);
+    void DemosaicEdgeAware16(const std::vector<uint16_t>& bayerRaw, std::vector<RGBFormat16>& output, int width, int height, BayerPattern pattern, uint16_t whiteLevel);
+    void DemosaicEdgeAwareColorDifference16(const std::vector<uint16_t>& bayerRaw, std::vector<RGBFormat16>& output, int width, int height, BayerPattern pattern, uint16_t whiteLevel);
 
 }

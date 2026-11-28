@@ -559,6 +559,399 @@ void DemosaicByBayer_EdgeAwareV2(const std::vector<uint8_t>& bayerRaw, std::vect
 
     }
 
+    void DemosaicEdgeAware16(const std::vector<uint16_t>& bayerRaw, std::vector<RGBFormat16>& output, int width, int height, BayerPattern pattern, uint16_t whiteLevel){
+        if(width <= 0 || height <= 0){
+            std::cerr << "Invalid Image Dimension\n";
+            return;
+        }
+
+        const auto pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
+        
+        if(bayerRaw.size() != pixelCount) {
+            std::cerr << "Raw Size doesn't match dimension\n";
+            return;
+        }
+
+        if(whiteLevel <= 0){
+            std::cerr << "Invalid white level\n";
+            return;
+        }
+
+        if(pattern == BayerPattern::Unknown){
+            std::cerr << "Unknown Bayer Pattern\n";
+            return;
+        }
+
+        output.resize(pixelCount);
+
+        auto average2 = [](const uint16_t a, const uint16_t b){
+            return static_cast<uint16_t>((static_cast<uint32_t>(a)+static_cast<uint32_t>(b))/2U);
+        };
+
+        auto average4 = [](const uint16_t a, const uint16_t b, const uint16_t c, const uint16_t d){
+            return static_cast<uint16_t>((static_cast<uint32_t>(a) + 
+                                          static_cast<uint32_t>(b) +
+                                          static_cast<uint32_t>(c) +
+                                          static_cast<uint32_t>(d)) / 4U);
+        };
+
+        auto get = [&](int x, int y){
+            return std::min(GetBayerPixelMirror16(bayerRaw, x, y, width, height), whiteLevel);
+        };
+
+
+        for(int y = 0 ; y < height ; ++y){
+            for(int x = 0 ; x < width  ; ++x){
+                const auto idx = y * width + x;
+                auto& pixel = output[idx];
+
+               switch(GetCFAColor(pattern,x,y)){
+                    case CFAColor::Red :{
+                        pixel.r = get(x,y);
+
+                        // Trend G 
+                        const float trendH = std::abs(get(x-1, y) - get(x+1, y));
+                        const float trendV = std::abs(get(x, y - 1) - get(x, y + 1));
+
+                        const float greenH = average2(get(x - 1, y), get(x + 1, y));
+                        const float greenV = average2(get(x, y - 1), get(x, y + 1));
+
+                        
+                        constexpr float directionThreshold = 10.0F;
+                        constexpr float epsilon = 1.0F;
+
+                        float green;
+
+                        if (std::abs(trendH - trendV) > directionThreshold)
+                        {
+                            green = (trendH < trendV) ? greenH : greenV;
+                        } else {
+                            const float weightH = 1.0F / (trendH + epsilon);
+                            const float weightV = 1.0F / (trendV + epsilon);
+
+                            green = (weightH * greenH + weightV * greenV) / (weightH + weightV);
+                        }
+
+                        pixel.g = static_cast<uint16_t>(std::lround(green));
+
+                        // Trend B 
+                        const float trend00_11 = std::abs(get(x-1,y-1) - get(x+1,y+1));
+                        const float trend01_10 = std::abs(get(x+1,y-1) - get(x-1,y+1));
+
+                        const float blue00_11 = average2(get(x-1,y-1),get(x+1,y+1));
+                        const float blue01_10 = average2(get(x+1,y-1),get(x-1,y+1));
+
+                        float blue;
+
+                        if(std::abs(trend00_11 - trend01_10) > directionThreshold){
+                            blue = (trend00_11<trend01_10)? blue00_11 : blue01_10;
+                        }else{
+                            const float weight00_11 = 1.0F / (trend00_11 + epsilon);
+                            const float weight01_10 = 1.0F / (trend01_10 + epsilon);
+
+                            blue = (weight00_11*blue00_11 + weight01_10 * blue01_10) / (weight00_11+weight01_10);
+                        }
+                        pixel.b = static_cast<uint16_t>(std::lround(blue));
+                        break;
+                    }
+                    case CFAColor::Blue:{
+                        const float trendH = std::abs(get(x-1, y) - get(x+1, y));
+                        const float trendV = std::abs(get(x, y - 1) - get(x, y + 1));
+
+                        const float greenH = average2(get(x - 1, y), get(x + 1, y));
+                        const float greenV = average2(get(x, y - 1), get(x, y + 1));
+
+                        
+                        constexpr float directionThreshold = 10.0F;
+                        constexpr float epsilon = 1.0F;
+
+                        float green;
+                        pixel.b = get(x,y);
+                         // Trend G 
+                        if (std::abs(trendH - trendV) > directionThreshold)
+                        {
+                            green = (trendH < trendV) ? greenH : greenV;
+                        } else {
+                            const float weightH = 1.0F / (trendH + epsilon);
+                            const float weightV = 1.0F / (trendV + epsilon);
+
+                            green = (weightH * greenH + weightV * greenV) / (weightH + weightV);
+                        }
+                        pixel.g = static_cast<uint16_t>(std::lround(green));
+                        // Trend R 
+                        const float trend00_11 = std::abs(get(x-1,y-1) - get(x+1,y+1));
+                        const float trend01_10 = std::abs(get(x+1,y-1) - get(x-1,y+1));
+
+                        const float red00_11 = average2(get(x-1,y-1),get(x+1,y+1));
+                        const float red01_10 = average2(get(x+1,y-1),get(x-1,y+1));
+
+                        float red;
+
+                        if(std::abs(trend00_11 - trend01_10) > directionThreshold){
+                            red = (trend00_11<trend01_10)? red00_11 : red01_10;
+                        }else{
+                            const float weight00_11 = 1.0F / (trend00_11 + epsilon);
+                            const float weight01_10 = 1.0F / (trend01_10 + epsilon);
+
+                            red = (weight00_11*red00_11 + weight01_10 * red01_10) / (weight00_11+weight01_10);
+                        }
+                        pixel.r = static_cast<uint16_t>(std::lround(red));
+                        break;
+                    }
+                    case CFAColor::Green:{
+                        pixel.g = get(x,y);
+                        const bool horizontalIsRed =
+                            GetCFAColor(pattern, x + 1, y) == CFAColor::Red;
+
+                        if (horizontalIsRed)
+                        {
+                            pixel.r = average2(get(x - 1, y), get(x + 1, y));
+                            pixel.b = average2(get(x, y - 1), get(x, y + 1));
+                        }
+                        else
+                        {
+                            pixel.b = average2(get(x - 1, y), get(x + 1, y));
+                            pixel.r = average2(get(x, y - 1), get(x, y + 1));
+                        }
+                        break;
+                    }
+                }
+               
+            }
+        }
+
+    }
+
+    void DemosaicEdgeAwareColorDifference16(const std::vector<uint16_t>& bayerRaw, std::vector<RGBFormat16>& output, int width, int height, BayerPattern pattern, uint16_t whiteLevel){
+        if(width < 2  || height < 2){
+            std::cerr << "Invalid Image Dimension\n";
+            return;
+        }
+
+        const auto pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
+        
+        if(bayerRaw.size() != pixelCount) {
+            std::cerr << "Raw Size doesn't match dimension\n";
+            return;
+        }
+
+        if(whiteLevel <= 0){
+            std::cerr << "Invalid white level\n";
+            return;
+        }
+
+        if(pattern == BayerPattern::Unknown){
+            std::cerr << "Unknown Bayer Pattern\n";
+            return;
+        }
+
+        output.resize(pixelCount);
+
+        // Create Information of color difference
+        std::vector<float> greenMap(pixelCount); // completed green plane
+
+        float redMinusGreen;  // R - G
+        float blueMinusGreen; // B - G
+
+        float interpolatedRedDiff;  // after interpolated by R-G
+        float interpolatedBlueDiff; // after interpolated by B-G
+
+         auto average2 = [](const uint16_t a, const uint16_t b){
+            return static_cast<uint16_t>((static_cast<uint32_t>(a)+static_cast<uint32_t>(b))*0.5F);
+        };
+
+        auto average4 = [](const uint16_t a, const uint16_t b, const uint16_t c, const uint16_t d){
+            return static_cast<uint16_t>((static_cast<uint32_t>(a) + 
+                                          static_cast<uint32_t>(b) +
+                                          static_cast<uint32_t>(c) +
+                                          static_cast<uint32_t>(d)) / 4U);
+        };
+
+        auto get = [&](const int x, const int y){
+            return std::min(GetBayerPixelMirror16(bayerRaw, x, y, width, height), whiteLevel);
+        };
+
+        // Create Green Map 
+        for(int y = 0 ; y < height ; ++y){
+            for(int x = 0 ; x < width ; ++x){
+                const size_t idx = static_cast<size_t>(y)*width + x;
+                auto& green = greenMap[idx];
+
+                switch(GetCFAColor(pattern,x,y)){
+                    case CFAColor::Red : {
+                        const float trendH = std::abs(get(x-1,y)-get(x+1,y));
+                        const float trendV = std::abs(get(x,y-1)-get(x,y+1));
+
+                        const float greenH = average2(get(x - 1, y), get(x + 1, y));
+                        const float greenV = average2(get(x, y - 1), get(x, y + 1));
+
+                        
+                        constexpr float directionThreshold = 10.0F;
+                        constexpr float epsilon = 1.0F;
+
+                    
+                        if(std::abs(trendH - trendV) > directionThreshold){
+                            green = (trendH<trendV)? greenH : greenV;
+                        }else{
+                            const float weightH = 1 / (trendH + epsilon);
+                            const float weightV = 1 / (trendV + epsilon);
+
+                            green = (weightH * greenH + weightV * greenV) / (weightH + weightV);
+                        }
+                        break;
+                    }
+                    case CFAColor::Green : {
+                        green  = static_cast<float>(get(x,y));
+                        break;
+                    }
+
+                    case CFAColor::Blue : {
+                        const float trendH = std::abs(get(x-1,y)-get(x+1,y));
+                        const float trendV = std::abs(get(x,y-1)-get(x,y+1));
+
+                        const float greenH = average2(get(x - 1, y), get(x + 1, y));
+                        const float greenV = average2(get(x, y - 1), get(x, y + 1));
+
+                        
+                        constexpr float directionThreshold = 10.0F;
+                        constexpr float epsilon = 1.0F;
+
+                    
+                        if(std::abs(trendH - trendV) > directionThreshold){
+                            green = (trendH<trendV)? greenH : greenV;
+                        }else{
+                            const float weightH = 1.0F / (trendH + epsilon);
+                            const float weightV = 1.0F / (trendV + epsilon);
+
+                            green = (weightH * greenH + weightV * greenV) / (weightH + weightV);
+                        }
+                        break;
+                    }
+                    
+                }
+
+            }
+        }
+
+        auto getGreen = [&](int x, int y){
+            x = MirrorIndex(x,width);
+            y = MirrorIndex(y,height);
+
+            const std::size_t idx = static_cast<size_t>(y)*width + x;
+            return greenMap[idx];
+        };
+
+        auto toUint16 = [&](float value) -> std::uint16_t {
+            const float bound = std::max(0.0F, std::min(value,static_cast<float>(whiteLevel)));
+            return static_cast<uint16_t>(std::lround(bound));
+        };
+
+        // Color Difference 
+        for(int y = 0 ; y < height ; ++y){
+            for(int x = 0 ; x < width ; ++x){
+                const size_t idx = static_cast<size_t>(y) * width + x;
+                auto& pixel = output[idx];
+                
+
+
+                switch(GetCFAColor(pattern,x,y)){
+                    case CFAColor::Red:{
+                        const float centerG = greenMap[idx];
+
+                        const float diffNW = static_cast<float>(get(x-1,y-1) - getGreen(x-1,y-1));
+                        const float diffNE = static_cast<float>(get(x+1,y-1) - getGreen(x+1,y-1));
+                        const float diffSW = static_cast<float>(get(x-1,y+1) - getGreen(x-1,y+1));
+                        const float diffSE = static_cast<float>(get(x+1,y+1) - getGreen(x+1,y+1));
+
+
+                        // calculate trend
+                        const float trendNW_SE = std::abs(get(x - 1, y - 1) - get(x + 1, y + 1));
+                        const float trendNE_SW = std::abs(get(x + 1, y - 1) - get(x - 1, y + 1));
+
+                        constexpr float directionThreshold = 10.0F;
+                        
+
+                        float interpolatedBlueDiff;
+                        if(std::abs(trendNE_SW - trendNW_SE) > directionThreshold){
+                            interpolatedBlueDiff = (trendNE_SW < trendNW_SE) ? (diffNE + diffSW) * 0.5F : (diffNW + diffSE) * 0.5F;
+                        }else{
+                            interpolatedBlueDiff = (diffNW + diffNE + diffSW + diffSE) * 0.25F;
+                        }
+
+                        const float reconstructedB = centerG + interpolatedBlueDiff;
+
+                        pixel.r = get(x,y);
+                        pixel.g = toUint16(centerG);
+                        pixel.b = toUint16(reconstructedB);
+
+                        break;
+                    }
+                    case CFAColor::Green : {
+                        const float centerG = greenMap[idx];
+                        const bool horizontalIsRed = GetCFAColor(pattern, x + 1, y) == CFAColor::Red;
+                        float reconstructedR;
+                        float reconstructedB;
+
+
+                        if(horizontalIsRed ){
+                            const float redDiffLeft = static_cast<float>(get(x-1,y)-getGreen(x-1,y));
+                            const float redDiffRight = static_cast<float>(get(x+1,y) - getGreen(x+1,y));
+                            const float blueDiffTop = static_cast<float>(get(x,y-1)- getGreen(x,y-1));
+                            const float blueDiffBottom = static_cast<float>(get(x,y+1)-getGreen(x,y+1));
+
+                            reconstructedR = centerG + (redDiffLeft+redDiffRight) * 0.5F;
+                            reconstructedB = centerG + (blueDiffTop + blueDiffBottom) * 0.5F;
+                            
+                        }else{
+                            const float blueDiffLeft = static_cast<float>(get(x-1,y)-getGreen(x-1,y));
+                            const float blueDiffRight = static_cast<float>(get(x+1,y) - getGreen(x+1,y));
+                            const float redDiffTop = static_cast<float>(get(x,y-1)- getGreen(x,y-1));
+                            const float redDiffBottom = static_cast<float>(get(x,y+1)-getGreen(x,y+1));
+
+                            reconstructedB = centerG + (blueDiffLeft+blueDiffRight) * 0.5F;
+                            reconstructedR = centerG + (redDiffTop + redDiffBottom) * 0.5F;
+                        }
+                        
+                        pixel.r = toUint16(reconstructedR);
+                        pixel.g = get(x,y);
+                        pixel.b = toUint16(reconstructedB);
+                        
+                        break;
+                    }
+                    case CFAColor::Blue : {
+                        const float centerG = greenMap[idx];
+
+                        const float diffNW = static_cast<float>(get(x-1,y-1) - getGreen(x-1,y-1));
+                        const float diffNE = static_cast<float>(get(x+1,y-1) - getGreen(x+1,y-1));
+                        const float diffSW = static_cast<float>(get(x-1,y+1) - getGreen(x-1,y+1));
+                        const float diffSE = static_cast<float>(get(x+1,y+1) - getGreen(x+1,y+1));
+
+                        // calculate trend
+                        const float trendNW_SE = std::abs(get(x - 1, y - 1) - get(x + 1, y + 1));
+                        const float trendNE_SW = std::abs(get(x + 1, y - 1) - get(x - 1, y + 1));
+
+                        constexpr float directionThreshold = 10.0F;
+
+                        float interpolatedRedDiff;
+                        if(std::abs(trendNE_SW - trendNW_SE) > directionThreshold){
+                            interpolatedRedDiff = (trendNE_SW < trendNW_SE) ? (diffNE + diffSW) * 0.5F : (diffNW + diffSE) * 0.5F;
+                        }else{
+                            interpolatedRedDiff = (diffNW + diffNE + diffSW + diffSE) * 0.25F;
+                        }
+
+                        const float reconstructedR = centerG + interpolatedRedDiff;
+
+                        pixel.b = get(x,y);
+                        pixel.g = toUint16(centerG);
+                        pixel.r = toUint16(reconstructedR);
+                        break;
+                    }
+                }
+            }
+        }
+
+
+    }
 
 
 

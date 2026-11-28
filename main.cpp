@@ -223,7 +223,7 @@ void TestColorCalibration(){
 
 void testBLC(){
     // read image 
-    std::string dngPath = R"(/Users/otuschen/Documents/C++/Test/Image/Cat.DNG)";
+    std::string dngPath = R"(/Users/otuschen/Documents/C++/Test/Image/Map.DNG)";
     mini_isp::RawImage rawImg;
     bool readSuccess = mini_isp::ReadDNG(dngPath, rawImg);
     if(!readSuccess) {std::cout<<"error : load data fail!!" << std::endl; return;}
@@ -240,8 +240,8 @@ void testBLC(){
     std::vector<std::uint16_t> awb16;
     mini_isp::AWB_GrayWorldV2_16(blc16, awb16, rawImg.width, rawImg.height, rawImg.pattern, correctedWhiteLevel);
     std::vector<mini_isp::RGBFormat16> rgb16;
-    mini_isp::DemosaicBilinear16(awb16,rgb16,rawImg.width,rawImg.height,rawImg.pattern, correctedWhiteLevel);
-    std::string outputFile(R"(/Users/otuschen/Documents/C++/Test/Image/ReportImage/CatYesBLCYesAWBYessRGB.ppm)");
+    mini_isp::DemosaicEdgeAware16(awb16,rgb16,rawImg.width,rawImg.height,rawImg.pattern, correctedWhiteLevel);
+    std::string outputFile(R"(/Users/otuschen/Documents/C++/Test/Image/ReportImage/MapYesBLCYesAWBYessRGBEdgeDemosaic.ppm)");
     std::vector<mini_isp::RGBFormat> rgb8;
     rgb8.resize(rgb16.size());
 

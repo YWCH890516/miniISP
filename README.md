@@ -10,7 +10,7 @@ A C++17 learning project that implements core image-signal-processing stages and
 - Black-level correction with one level or four CFA-phase levels
 - Synthetic hot/dead/stuck pixels and median-based defective-pixel correction
 - Global gray-world AWB and a variant that selects 2x2 Bayer blocks using brightness and channel-spread thresholds
-- 8-bit RGGB bilinear / edge-aware demosaic, and 16-bit bilinear demosaic supporting four Bayer patterns
+- 8-bit RGGB bilinear / edge-aware demosaic, plus 16-bit bilinear, edge-aware, and edge-aware color-difference reconstruction supporting four Bayer patterns
 - Flat-field lens-shading map generation and bilinear gain interpolation
 - Color-chart patch sampling, neutral-patch white-balance gains, and 3x3 color-correction matrix fitting/application
 - sRGB and Adobe RGB transfer functions, and linear Adobe RGB to linear sRGB conversion
@@ -133,8 +133,9 @@ All three inputs must be aligned, 8-bit `P6` PPM images with identical dimension
 ## Current limitations and next work
 
 - This is an offline learning/portfolio project, not a real-time or production ISP implementation.
-- Edge-aware demosaic is currently 8-bit RGGB only; the 16-bit RAW path uses bilinear demosaic.
-- Demosaic edge handling clamps coordinates and therefore does not preserve CFA parity at the boundary.
+- The library exposes `DemosaicEdgeAware16` and `DemosaicEdgeAwareColorDifference16`; the CLI RAW path still uses bilinear demosaic. The experimental `main.cpp` currently runs the local Map DNG through the 16-bit edge-aware method.
+- Both new 16-bit edge-aware methods use mirror sampling without repeating the boundary pixel, preserving CFA parity for dimensions of at least 2. The older bilinear and 8-bit methods still use clamped boundary sampling.
+- The color-difference method first reconstructs a full green plane, then interpolates signed R-G and B-G differences and adds back the center green value. Its two-sample green averages still truncate to integers; retaining fractional precision remains follow-up work. Its low-direction-contrast diagonal branch uses an equal average, whereas the direct edge-aware method uses inverse-gradient weights, so comparisons do not isolate color-difference reconstruction alone.
 - The DPC implementation is a simple local outlier/median method and does not yet include a calibrated defect map or directional replacement.
 - LSC calibration currently uses the center grid cell as its reference and needs stronger flat-field validation and gain limits for production use.
 - RGB exposure fusion assumes pre-aligned frames and does not yet perform motion compensation or deghosting.

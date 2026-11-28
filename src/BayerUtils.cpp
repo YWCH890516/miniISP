@@ -18,6 +18,33 @@ namespace mini_isp{
         return bayerRaw[y * width + x];
     }
 
+    int MirrorIndex(int coordinate, int length){
+        if(length < 2){
+            throw std::invalid_argument("Bayer mirror requires dimensions >= 2.");
+        }
+
+        const std::int64_t period = 2LL * (length - 1);
+        std::int64_t position = static_cast<std::int64_t>(coordinate) % period;
+
+        if(position < 0){
+            position += period;
+        }
+
+        if(position >= length){
+            position = period - position;
+        }
+
+        return static_cast<int>(position);
+    }
+
+    uint16_t GetBayerPixelMirror16(const std::vector<uint16_t>& bayerRaw, int x, int y, int width, int height){
+
+        x = MirrorIndex(x,width);
+        y = MirrorIndex(y,height);
+
+        return bayerRaw[y*width+x];
+    }
+
     CFAColor GetCFAColor(BayerPattern pattern, int x, int y){
         const bool evenX = (x&1) == 0;
         const bool evenY = (y&1) == 0;
